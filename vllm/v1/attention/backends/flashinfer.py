@@ -344,6 +344,10 @@ class FlashInferBackend(AttentionBackend):
     def get_name() -> str:
         return "FLASHINFER"
 
+    @classmethod
+    def supports_non_causal(cls) -> bool:
+        return True
+
     @staticmethod
     def get_impl_cls() -> type["FlashInferImpl"]:
         return FlashInferImpl
@@ -531,6 +535,9 @@ class FlashInferMetadata:
     """
 
     cascade_wrapper: MultiLevelCascadeAttentionWrapper | None
+
+    causal: bool
+    """Whether this batch should use causal decoder attention."""
 
 
 class FlashInferMetadataBuilder(AttentionMetadataBuilder[FlashInferMetadata]):
@@ -961,6 +968,7 @@ class FlashInferMetadataBuilder(AttentionMetadataBuilder[FlashInferMetadata]):
             prefill=None,
             decode=None,
             cascade_wrapper=None,
+            causal=common_attn_metadata.causal,
         )
 
         # Guard access to seq_lens_cpu, which may not always be needed
@@ -1061,7 +1069,7 @@ class FlashInferMetadataBuilder(AttentionMetadataBuilder[FlashInferMetadata]):
                 num_kv_heads=self.num_kv_heads,
                 head_dim=self.head_dim,
                 page_size=self.page_size,
-                causal=True,
+                causal=attn_metadata.causal,
                 sm_scale=self.sm_scale,
                 window_left=self.window_left,
                 logits_soft_cap=self.logits_soft_cap,
@@ -1157,7 +1165,7 @@ class FlashInferMetadataBuilder(AttentionMetadataBuilder[FlashInferMetadata]):
                         num_kv_heads=self.num_kv_heads,
                         head_dim_qk=self.head_dim,
                         page_size=self.page_size,
-                        causal=True,
+                        causal=attn_metadata.causal,
                         sm_scale=self.sm_scale,
                         window_left=self.window_left,
                         logits_soft_cap=self.logits_soft_cap,
@@ -1474,13 +1482,11 @@ class FlashInferImpl(AttentionImpl):
                         self.logits_soft_cap or 0.0
                     )
                     assert prefill_wrapper._context._sm_scale == self.scale
-                    assert not prefill_wrapper._context._causal
                     assert prefill_wrapper._new_tokens._window_left == self.window_left
                     assert prefill_wrapper._new_tokens._logits_soft_cap == (
                         self.logits_soft_cap or 0.0
                     )
                     assert prefill_wrapper._new_tokens._sm_scale == self.scale
-                    assert prefill_wrapper._new_tokens._causal
 
                     prefill_wrapper.run(
                         layer,
@@ -1499,7 +1505,7 @@ class FlashInferImpl(AttentionImpl):
                         self.logits_soft_cap or 0.0
                     )
                     assert prefill_wrapper._sm_scale == self.scale
-                    assert prefill_wrapper._causal
+                    assert prefill_wrapper._causal == attn_metadata.causal
                     prefill_wrapper.run(
                         prefill_query,
                         kv_cache_permute,
